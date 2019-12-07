@@ -7,6 +7,7 @@
 module P5 where
 
 import qualified Data.IntMap.Strict as M
+import Data.List (intercalate)
 import Control.Monad ( ap, when )
 import Control.Monad.Fail
 import Data.Foldable ( for_ )
@@ -21,13 +22,56 @@ data Instr
   | Arith Op Param Param Addr
   | Input Addr
   | Output Param
-  | Cond (Int -> Int -> Bool) Param Param Addr
-  | Jump (Int -> Bool) Param Param
+  | Cond Cond Param Param Addr
+  | Jump Jump Param Param
+
+data Cond = TLT | TEQ
+data Jump = JNZ | JZE
+
+cond2func = \case
+  TLT -> (<)
+  TEQ -> (==)
+
+jump2func = \case
+  JNZ -> (/= 0)
+  JZE -> (== 0)
 
 data Param = I Int | A Addr
 
 type Addr = Int
-type Op = Int -> Int -> Int
+data Op = ADD | MUL
+
+op2func = \case
+  ADD -> (+)
+  MUL -> (*)
+
+prettyInstr :: Instr -> (String -> String)
+prettyInstr = \case
+  Done -> app "hlt"
+  Arith op p1 p2 dst ->
+    app (intercalate "\t" [op2mnemonic op, showParam p1, showParam p2, showParam (A dst)])
+  Input dst ->
+    app $ "inp\t" ++ showParam (A dst)
+  Output p ->
+    app $ "out\t" ++ showParam p
+  Cond c p1 p2 dst ->
+    app (intercalate "\t" [cond2mnemonic c, showParam p1, showParam p2, showParam (A dst)])
+  Jump j p1 p2 ->
+    app (intercalate "\t" [jump2mnemonic j, showParam p1, showParam p2])
+  where
+    app s = (++ s)
+    op2mnemonic = \case
+      ADD -> "add"
+      MUL -> "mul"
+    cond2mnemonic = \case
+      TEQ -> "teq"
+      TLT -> "tlt"
+    jump2mnemonic = \case
+      JNZ -> "jnz"
+      JZE -> "jze"
+    showParam = \case
+      I x -> show x
+      A x -> "$" ++ show x
 
 digits :: Int -> [Int]
 digits n = r : digits q where
@@ -41,14 +85,14 @@ split (flip quotRem 100 -> (modes, code)) = (digits modes, code)
 decodeOp :: Int -> (Int, [Int] -> Instr)
 decodeOp (split -> (m1:m2:_, code)) = case code of
   99 -> (0, \[] -> Done)
-  1 -> (3, \[p1, p2, p3] -> Arith (+) (mode m1 p1) (mode m2 p2) p3)
-  2 -> (3, \[p1, p2, p3] -> Arith (*) (mode m1 p1) (mode m2 p2) p3)
+  1 -> (3, \[p1, p2, p3] -> Arith ADD (mode m1 p1) (mode m2 p2) p3)
+  2 -> (3, \[p1, p2, p3] -> Arith MUL (mode m1 p1) (mode m2 p2) p3)
   3 -> (1, \[p] -> Input p)
   4 -> (1, \[p] -> Output (mode m1 p))
-  5 -> (2, \[p1, p2] -> Jump (0 /=) (mode m1 p1) (mode m2 p2))
-  6 -> (2, \[p1, p2] -> Jump (0 ==) (mode m1 p1) (mode m2 p2))
-  7 -> (3, \[p1, p2, p3] -> Cond (<) (mode m1 p1) (mode m2 p2) p3)
-  8 -> (3, \[p1, p2, p3] -> Cond (==) (mode m1 p1) (mode m2 p2) p3)
+  5 -> (2, \[p1, p2] -> Jump JNZ (mode m1 p1) (mode m2 p2))
+  6 -> (2, \[p1, p2] -> Jump JZE (mode m1 p1) (mode m2 p2))
+  7 -> (3, \[p1, p2, p3] -> Cond TLT (mode m1 p1) (mode m2 p2) p3)
+  8 -> (3, \[p1, p2, p3] -> Cond TEQ (mode m1 p1) (mode m2 p2) p3)
   _ -> error "invalid opcode"
   where
     mode 0 = A
@@ -99,6 +143,14 @@ instance MonadFail Interp where
 gets :: (State -> s') -> Interp s'
 gets f = Interp $ \s -> (s, f s)
 
+-- | Tries to extract a value from the output queue.
+-- Returns Nothing if there's no output.
+getOutput :: Interp (Maybe Int)
+getOutput = Interp $ \State{..} ->
+  case _output of
+    [] -> (State{..}, Nothing)
+    x : _output -> (State{..}, Just x)
+
 modify :: (State -> State) -> Interp ()
 modify f = Interp $ \s -> (f s, ())
 
@@ -140,7 +192,7 @@ data Status = Halt | Running
 
 execute :: Instr -> Interp Status
 execute Done = pure Halt
-execute (Arith op p1 p2 dst) = do
+execute (Arith (op2func -> op) p1 p2 dst) = do
   r1 <- loadParam p1
   r2 <- loadParam p2
   store dst (r1 `op` r2)
@@ -153,33 +205,45 @@ execute (Output p) = do
   r <- loadParam p
   output r
   pure Running
-execute (Cond op p1 p2 dst) = do
+execute (Cond (cond2func -> op) p1 p2 dst) = do
   r1 <- loadParam p1
   r2 <- loadParam p2
   store dst (fromEnum $ r1 `op` r2)
   pure Running
-execute (Jump op p1 p2) = do
+execute (Jump (jump2func -> op) p1 p2) = do
   r <- loadParam p1
   dst <- loadParam p2
   when (op r) $ jumpTo dst
   pure Running
 
--- | Runs the interpreter until it halts, and returns the value at
--- position 0.
+-- | Run a fetch-decode-execute cycle.
+step :: Interp Status
+step = fetch 1 >>= decode . head >>= execute
+
+-- | Runs the interpreter until it halts.
 trace :: Interp ()
-trace = do
-  fetch 1 >>= decode . head >>= execute >>= \case
+trace =
+  step >>= \case
     Halt -> pure ()
     Running -> trace
 
-loadInitialState :: [Int] -> IO State
-loadInitialState _input = do
-  mem <- foldr (uncurry M.insert) M.empty . zip [0..] . read . (++ "]") . ('[' :) <$> readFile "inputs/p5.txt"
-  pure $ State { pc = 0, _output = [], .. }
+-- | Runs the interpreter until it generates an output,
+-- removing the output from the output queue.
+-- Returns Nothing if the interpreter halts before generating output.
+pump :: Interp (Maybe Int)
+pump = step >>= \case
+  Running -> maybe pump (pure . pure) =<< getOutput 
+  Halt -> pure Nothing
+
+loadState :: String -> IO State
+loadState path = do
+  mem <- foldr (uncurry M.insert) M.empty . zip [0..] . read . (++ "]") . ('[' :) <$> readFile path
+  pure $ State { pc = 0, _input = [], _output = [], .. }
 
 run :: Int -> IO ()
 run k = do
-  (State {..}, _) <- unInterp trace <$> loadInitialState [k]
+  s <- loadState "inputs/p5.txt"
+  let (State {..}, _) = unInterp trace s { _input = [k] }
   for_ _output print
 
 main1 = run 1

@@ -6,6 +6,7 @@ import qualified P3
 import qualified P3b
 import qualified P5
 import qualified P6
+import qualified P7
 
 main :: IO ()
-main = P6.main2
+main = P7.main2

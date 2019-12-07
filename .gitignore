@@ -3,3 +3,4 @@ aoc2019.cabal
 *~
 inputs/
 *_flymake.hs
+*.lock
