@@ -33,6 +33,7 @@ executables:
       - P8
       - P9
       - P10
+      - P11
     source-dirs:
       - app
       - src

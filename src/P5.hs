@@ -265,6 +265,19 @@ pump = step >>= \case
 call' :: State -> [Int] -> (State, Maybe Int)
 call' s x = unInterp pump s { _input = _input s ++ x }
 
+-- | Pushes the given integers to the computer's input queue and pumps
+-- the computer for the desired number of outputs.
+-- Returns the generated outputs. If the length of the returned list
+-- is shorter than the desired number of outputs, it's because the
+-- computer halted.
+call'' :: State -> [Int] -> Int -> (State, [Int])
+call'' s ins k = unInterp (go k) s { _input = _input s ++ ins } where
+  go 0 = pure []
+  go k = do
+    pump >>= \case
+      Nothing -> pure []
+      Just x -> (x :) <$> go (k-1)
+
 loadState :: String -> IO State
 loadState path = do
   mem <- foldr (uncurry M.insert) M.empty . zip [0..] . read . (++ "]") . ('[' :) <$> readFile path
