@@ -14,12 +14,6 @@ call :: State -> Int -> Int -> Int
 call s p x = r where
   (State{_output = [r]}, _) = unInterp trace s { _input = [p, x] }
 
--- | Pushes the given integer to the computer state's input queue and
--- pumps the computer for an output. Returns the new computer state
--- and the result, if any was generated before the computer halted.
-call' :: State -> [Int] -> (State, Maybe Int)
-call' s x = unInterp pump s { _input = _input s ++ x }
-  
 chain :: State -> [Int] -> Int
 chain s = foldl' (flip $ call s) 0
 

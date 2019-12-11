@@ -19,11 +19,12 @@ type Mem = M.IntMap Int
 type Program = [Instr]
 data Instr
   = Done
-  | Arith Op Param Param Addr
-  | Input Addr
+  | Arith Op Param Param Param
+  | Input Param
   | Output Param
-  | Cond Cond Param Param Addr
+  | Cond Cond Param Param Param
   | Jump Jump Param Param
+  | Rel Param
 
 data Cond = TLT | TEQ
 data Jump = JNZ | JZE
@@ -36,7 +37,7 @@ jump2func = \case
   JNZ -> (/= 0)
   JZE -> (== 0)
 
-data Param = I Int | A Addr
+data Param = I Int | A Addr | R Addr
 
 type Addr = Int
 data Op = ADD | MUL
@@ -49,13 +50,13 @@ prettyInstr :: Instr -> (String -> String)
 prettyInstr = \case
   Done -> app "hlt"
   Arith op p1 p2 dst ->
-    app (intercalate "\t" [op2mnemonic op, showParam p1, showParam p2, showParam (A dst)])
+    app (intercalate "\t" [op2mnemonic op, showParam p1, showParam p2, showParam dst])
   Input dst ->
-    app $ "inp\t" ++ showParam (A dst)
+    app $ "inp\t" ++ showParam dst
   Output p ->
     app $ "out\t" ++ showParam p
   Cond c p1 p2 dst ->
-    app (intercalate "\t" [cond2mnemonic c, showParam p1, showParam p2, showParam (A dst)])
+    app (intercalate "\t" [cond2mnemonic c, showParam p1, showParam p2, showParam dst])
   Jump j p1 p2 ->
     app (intercalate "\t" [jump2mnemonic j, showParam p1, showParam p2])
   where
@@ -83,29 +84,36 @@ split (flip quotRem 100 -> (modes, code)) = (digits modes, code)
 -- Returns the number of operands required and a function that takes
 -- the loaded operands to construct the instruction.
 decodeOp :: Int -> (Int, [Int] -> Instr)
-decodeOp (split -> (m1:m2:_, code)) = case code of
+decodeOp (split -> (m1:m2:m3:_, code)) = case code of
   99 -> (0, \[] -> Done)
-  1 -> (3, \[p1, p2, p3] -> Arith ADD (mode m1 p1) (mode m2 p2) p3)
-  2 -> (3, \[p1, p2, p3] -> Arith MUL (mode m1 p1) (mode m2 p2) p3)
-  3 -> (1, \[p] -> Input p)
+  1 -> (3, \[p1, p2, p3] -> Arith ADD (mode m1 p1) (mode m2 p2) (mode m3 p3))
+  2 -> (3, \[p1, p2, p3] -> Arith MUL (mode m1 p1) (mode m2 p2) (mode m3 p3))
+  3 -> (1, \[p1] -> Input (mode m1 p1))
   4 -> (1, \[p] -> Output (mode m1 p))
   5 -> (2, \[p1, p2] -> Jump JNZ (mode m1 p1) (mode m2 p2))
   6 -> (2, \[p1, p2] -> Jump JZE (mode m1 p1) (mode m2 p2))
-  7 -> (3, \[p1, p2, p3] -> Cond TLT (mode m1 p1) (mode m2 p2) p3)
-  8 -> (3, \[p1, p2, p3] -> Cond TEQ (mode m1 p1) (mode m2 p2) p3)
+  7 -> (3, \[p1, p2, p3] -> Cond TLT (mode m1 p1) (mode m2 p2) (mode m3 p3))
+  8 -> (3, \[p1, p2, p3] -> Cond TEQ (mode m1 p1) (mode m2 p2) (mode m3 p3))
+  9 -> (1, \[p1] -> Rel (mode m1 p1))
   _ -> error "invalid opcode"
   where
     mode 0 = A
     mode 1 = I
+    mode 2 = R
     mode _ = error "invalid mode"
 
 data State =
   State
   { pc :: !Int
   , mem :: !Mem
+  , relBase :: !Int
   , _input :: [Int]
   , _output :: [Int]
   }
+  deriving Show
+
+modifyRelBase :: (Int -> Int) -> State -> State
+modifyRelBase f State{..} = State { relBase = f relBase, .. }
 
 modifyMem :: (Mem -> Mem) -> State -> State
 modifyMem f State {..} = State { mem = f mem, .. }
@@ -151,6 +159,9 @@ getOutput = Interp $ \State{..} ->
     [] -> (State{..}, Nothing)
     x : _output -> (State{..}, Just x)
 
+getRelBase :: Interp Int
+getRelBase = gets relBase
+
 modify :: (State -> State) -> Interp ()
 modify f = Interp $ \s -> (f s, ())
 
@@ -158,7 +169,7 @@ load :: Addr -> Interp (Maybe Int)
 load i = gets (M.lookup i . mem)
 
 load' :: Addr -> Interp Int
-load' i = fromMaybe (error "load failed") <$> load i
+load' i = fromMaybe 0 <$> load i
 
 store :: Addr -> Int -> Interp ()
 store i x = modify (modifyMem (M.insert i x))
@@ -177,9 +188,15 @@ modifyPC f = modify (modifyPc f)
 jumpTo :: Int -> Interp ()
 jumpTo k = modifyPC (const k)
 
+-- | Resolves a parameter that *must* be an address to an absolute
+-- address.
+resolve :: Param -> Interp Addr
+resolve (A i) = pure i
+resolve (R i) = (i+) <$> getRelBase
+  
 loadParam :: Param -> Interp Int
 loadParam (I n) = pure n
-loadParam (A i) = load' i
+loadParam x = load' =<< resolve x
 
 -- | Decodes an opcode, fetches its parameters, and constructs the
 -- instruction.
@@ -195,11 +212,13 @@ execute Done = pure Halt
 execute (Arith (op2func -> op) p1 p2 dst) = do
   r1 <- loadParam p1
   r2 <- loadParam p2
+  dst <- resolve dst
   store dst (r1 `op` r2)
   pure Running
-execute (Input a) = do
+execute (Input dst) = do
   n <- input
-  store a n
+  dst <- resolve dst
+  store dst n
   pure Running
 execute (Output p) = do
   r <- loadParam p
@@ -208,12 +227,17 @@ execute (Output p) = do
 execute (Cond (cond2func -> op) p1 p2 dst) = do
   r1 <- loadParam p1
   r2 <- loadParam p2
+  dst <- resolve dst
   store dst (fromEnum $ r1 `op` r2)
   pure Running
 execute (Jump (jump2func -> op) p1 p2) = do
   r <- loadParam p1
   dst <- loadParam p2
   when (op r) $ jumpTo dst
+  pure Running
+execute (Rel p) = do
+  r <- loadParam p
+  modify (modifyRelBase (+ r))
   pure Running
 
 -- | Run a fetch-decode-execute cycle.
@@ -235,10 +259,16 @@ pump = step >>= \case
   Running -> maybe pump (pure . pure) =<< getOutput 
   Halt -> pure Nothing
 
+-- | Pushes the given integer to the computer state's input queue and
+-- pumps the computer for an output. Returns the new computer state
+-- and the result, if any was generated before the computer halted.
+call' :: State -> [Int] -> (State, Maybe Int)
+call' s x = unInterp pump s { _input = _input s ++ x }
+
 loadState :: String -> IO State
 loadState path = do
   mem <- foldr (uncurry M.insert) M.empty . zip [0..] . read . (++ "]") . ('[' :) <$> readFile path
-  pure $ State { pc = 0, _input = [], _output = [], .. }
+  pure $ State { pc = 0, _input = [], _output = [], relBase = 0, .. }
 
 run :: Int -> IO ()
 run k = do
