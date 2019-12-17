@@ -1,28 +1,51 @@
+{-# LANGUAGE ApplicativeDo #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE TupleSections #-}
+{-# LANGUAGE TypeFamilies #-}
 
 module State where
 
+import Trans
+import ExceptT
+
 import Control.Monad ( ap )
 
-newtype State s a =
-  State { unState :: s -> (s, a) }
+class Monad m => MonadState m where
+  type State (m :: * -> *) :: *
+  get :: m (State m)
+  put :: State m -> m ()
+
+newtype StateT s m a =
+  StateT { unState :: s -> m (s, a) }
   deriving Functor
 
-instance Applicative (State s) where
-  pure x = State $ \s -> (s, x)
+instance Monad m => Applicative (StateT s m) where
+  pure x = StateT $ \s -> pure (s, x)
   (<*>) = ap
 
-instance Monad (State s) where
+instance Monad m => Monad (StateT s m) where
   return = pure
-  State f >>= k = State $ \s ->
-    let (s', x) = f s in
+  StateT f >>= k = StateT $ \s -> do
+    (s', x) <- f s
     unState (k x) s'
-  
-get :: State s s
-get = State $ \s -> (s, s)
 
-gets :: (s -> s') -> State s s'
+instance Monad m => MonadState (StateT s m) where
+  type State (StateT s m) = s
+  -- get :: Monad m => StateT m s s
+  get = StateT $ \s -> pure (s, s)
+  put s = StateT $ \_ -> pure (s, ())
+
+instance MonadTrans (StateT s) where
+  lift x = StateT $ \s -> (s,) <$> x
+
+gets :: MonadState m => (State m -> s) -> m s
 gets f = f <$> get
 
-modify :: (s -> s) -> State s ()
-modify f = State $ \s -> (f s, ())
+modify :: MonadState m => (State m -> State m) -> m ()
+modify f = put . f =<< get
+
+instance MonadExcept m => MonadExcept (StateT s m) where
+  type Exc (StateT s m) = Exc m
+  throwError = lift . throwError
+  catchError (StateT x) h = StateT $ \s -> do
+    catchError (x s) (flip unState s . h)

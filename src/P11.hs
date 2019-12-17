@@ -1,8 +1,8 @@
-{-# LANGUAGE ViewPatterns #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module P11 where
 
@@ -10,6 +10,7 @@ import qualified P5 as I
 import State
 
 import Control.Monad ( forM_ )
+import Data.Functor.Identity
 import Data.Bool ( bool )
 import Data.List.NonEmpty ( NonEmpty (..) )
 import qualified Data.List.NonEmpty as N
@@ -74,26 +75,28 @@ data RobotState =
   }
 
 newtype Robot a =
-  Robot { unRobot :: State RobotState a }
+  Robot { unRobot :: StateT RobotState Identity a }
   deriving (Functor, Applicative, Monad)
+
+instance MonadState Robot where
+  type State Robot = RobotState
+  get = Robot get
+  put x = Robot (put x)
 
 (<#>) = flip (<$>)
 
 -- | Observes the paint color panel under the robot.
 observePanel :: Robot Paint
 observePanel =
-  lift (M.lookup <$> gets robotPos <*> gets robotGrid) <#> \case
+  Robot (M.lookup <$> gets robotPos <*> gets robotGrid) <#> \case
     Nothing -> Black
     Just (p :| _) -> p
 
 -- | Applies paint to the panel the robot is currently over.
 applyPaint :: Paint -> Robot ()
-applyPaint paint = lift $ do
+applyPaint paint = Robot $ do
   p <- gets robotPos
   modify (robotGrid' (applyPaintToGrid p paint))
-
-lift :: State RobotState a -> Robot a
-lift = Robot
 
 -- is this what deriving lenses is for???
   
@@ -113,14 +116,14 @@ robotPos' f s = s { robotPos = f (robotPos s) }
 -- and expected number of outputs.
 -- Returns fewer than desired outputs if the computer halts.
 call :: [Int] -> Int -> Robot [Int]
-call ins k = lift $ do
+call ins k = Robot $ do
   s <- gets robotComputer
   let (s', outs) = I.call'' s ins k
   modify (robotComputer' (const s'))
   pure outs
 
 advance :: Robot ()
-advance = lift $ do
+advance = Robot $ do
   d <- dir2displacement <$> gets robotDir
   modify (robotPos' (d +!))
 
@@ -139,7 +142,7 @@ step = do
     [] -> pure False
     [toEnum -> paint, toRot -> rotate] -> do
       applyPaint paint
-      lift $ modify (robotDir' rotate)
+      Robot $ modify (robotDir' rotate)
       advance
       pure True
     _ -> error "uh oh"
@@ -160,11 +163,11 @@ loadState path = do
 
 answer1 :: RobotState -> Int
 answer1 rs = n where
-  (rs', _) = unState (unRobot run) rs
+  (rs', _) = runIdentity $ unState (unRobot run) rs
   n = M.size (robotGrid rs')
 
 answer2 :: RobotState -> RobotState
-answer2 = fst . unState (unRobot run) . robotGrid' (applyPaintToGrid (V 0 0) White)
+answer2 = fst . runIdentity . unState (unRobot run) . robotGrid' (applyPaintToGrid (V 0 0) White)
 
 drawGrid grid = do
   let ks = M.keys grid
