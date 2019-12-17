@@ -58,7 +58,7 @@ initial =
 attract :: Obj -> Obj -> Obj
 Obj { vel=v1, pos=p1 } `attract` Obj { vel=v2, pos=p2 } =
   Obj { vel=v1', pos=p1 } where
-    v1' = v1 +! collapse (p1 -! p2) where
+    v1' = v1 +! collapse (p2 -! p1) where
       collapse = fmap signum
 
 type System = Z Obj

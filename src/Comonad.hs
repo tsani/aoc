@@ -26,9 +26,9 @@ instance Applicative Z where
 instance Comonad Z where
   extract (Z _ x _) = x
   duplicate z = Z (go left z) z (go right z) where
-    go next z = z : case next z of
+    go next z = case next z of
       Nothing -> []
-      Just z -> go next z
+      Just z -> z : go next z
   (<<=) w f = f <$> duplicate w
 
 (=>>) :: Comonad w => (w a -> b) -> w a -> w b
