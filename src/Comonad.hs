@@ -1,5 +1,7 @@
+{-# LANGUAGE DeriveFoldable #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveTraversable #-}
 
 module Comonad where
 
@@ -14,7 +16,15 @@ class Functor w => Comonad w where
   (<<=) :: w a -> (w a -> b) -> w b
 
 data Z a = Z [a] a [a]
-  deriving (Functor, Show, Read, Generic)
+  deriving
+    ( Functor
+    , Show
+    , Read
+    , Generic
+    , Eq
+    , Traversable
+    , Foldable
+    )
 
 infinite :: a -> Z a
 infinite x = Z (repeat x) x (repeat x)
