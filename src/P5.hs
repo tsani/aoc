@@ -1,11 +1,14 @@
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE ViewPatterns #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE ViewPatterns #-}
 
 module P5 where
 
+import Data.Functor.Identity
 import qualified Data.IntMap.Strict as M
 import Data.List (intercalate)
 import Control.Monad ( ap, when )
@@ -13,6 +16,8 @@ import Control.Monad.Fail
 import Data.Foldable ( for_ )
 import Data.Maybe (fromMaybe)
 import Data.Traversable ( for )
+
+import State
 
 type Mem = M.IntMap Int
 
@@ -102,8 +107,8 @@ decodeOp (split -> (m1:m2:m3:_, code)) = case code of
     mode 2 = R
     mode _ = error "invalid mode"
 
-data State =
-  State
+data CPU =
+  CPU
   { pc :: !Int
   , mem :: !Mem
   , relBase :: !Int
@@ -112,58 +117,56 @@ data State =
   }
   deriving Show
 
-modifyRelBase :: (Int -> Int) -> State -> State
-modifyRelBase f State{..} = State { relBase = f relBase, .. }
+_input' :: ([Int] -> [Int]) -> CPU -> CPU
+_input' f CPU{..} = CPU { _input = f _input, .. }
 
-modifyMem :: (Mem -> Mem) -> State -> State
-modifyMem f State {..} = State { mem = f mem, .. }
+_output' :: ([Int] -> [Int]) -> CPU -> CPU
+_output' f CPU{..} = CPU { _output = f _output, .. }
 
-modifyPc :: (Int -> Int) -> State -> State
-modifyPc f State {..} = State {pc = f pc, .. }
+modifyRelBase :: (Int -> Int) -> CPU -> CPU
+modifyRelBase f CPU{..} = CPU { relBase = f relBase, .. }
+
+modifyMem :: (Mem -> Mem) -> CPU -> CPU
+modifyMem f CPU {..} = CPU { mem = f mem, .. }
+
+modifyPc :: (Int -> Int) -> CPU -> CPU
+modifyPc f CPU {..} = CPU {pc = f pc, .. }
 
 input :: Interp Int
-input = Interp $ \State {..} ->
-  let (i : is) = _input in
-  (State {_input = is, ..}, i)
+input = do
+  i:is <- gets _input
+  modify (_input' (const is))
+  pure i
 
 output :: Int -> Interp ()
-output k = Interp $ \State {..} ->
-  (State {_output = _output ++ [k], ..}, ())
+output k = modify (_output' (++ [k]))
 
 newtype Interp a =
-  Interp { unInterp :: State -> (State, a) }
-  deriving Functor
+  Interp { unInterp :: StateT CPU Identity a }
+  deriving (Functor, Applicative, Monad)
 
-instance Applicative Interp where
-  pure x = Interp $ \s -> (s, x)
-  (<*>) = ap
+runInterp :: Interp a -> CPU -> (CPU, a)
+runInterp (Interp f) s = runIdentity $ unState f s
 
-instance Monad Interp where
-  return = pure
-  (Interp f) >>= k =
-    Interp $ \s ->
-    let (s', x) = f s in
-      unInterp (k x) s'
+instance MonadState Interp where
+  type State Interp = CPU
+  get = Interp get
+  put = Interp . put
 
 instance MonadFail Interp where
   fail = error
 
-gets :: (State -> s') -> Interp s'
-gets f = Interp $ \s -> (s, f s)
-
 -- | Tries to extract a value from the output queue.
 -- Returns Nothing if there's no output.
 getOutput :: Interp (Maybe Int)
-getOutput = Interp $ \State{..} ->
-  case _output of
-    [] -> (State{..}, Nothing)
-    x : _output -> (State{..}, Just x)
+getOutput = gets _output >>= \case
+  [] -> pure Nothing
+  x : _output -> do
+    modify (_output' (const _output))
+    pure (Just x)
 
 getRelBase :: Interp Int
 getRelBase = gets relBase
-
-modify :: (State -> State) -> Interp ()
-modify f = Interp $ \s -> (f s, ())
 
 load :: Addr -> Interp (Maybe Int)
 load i = gets (M.lookup i . mem)
@@ -262,31 +265,31 @@ pump = step >>= \case
 -- | Pushes the given integer to the computer state's input queue and
 -- pumps the computer for an output. Returns the new computer state
 -- and the result, if any was generated before the computer halted.
-call' :: State -> [Int] -> (State, Maybe Int)
-call' s x = unInterp pump s { _input = _input s ++ x }
+call' :: CPU -> [Int] -> (CPU, Maybe Int)
+call' s x = runInterp pump s { _input = _input s ++ x }
 
 -- | Pushes the given integers to the computer's input queue and pumps
 -- the computer for the desired number of outputs.
 -- Returns the generated outputs. If the length of the returned list
 -- is shorter than the desired number of outputs, it's because the
 -- computer halted.
-call'' :: State -> [Int] -> Int -> (State, [Int])
-call'' s ins k = unInterp (go k) s { _input = _input s ++ ins } where
+call'' :: CPU -> [Int] -> Int -> (CPU, [Int])
+call'' s ins k = runInterp (go k) s { _input = _input s ++ ins } where
   go 0 = pure []
   go k = do
     pump >>= \case
       Nothing -> pure []
       Just x -> (x :) <$> go (k-1)
 
-loadState :: String -> IO State
-loadState path = do
+loadCPU :: String -> IO CPU
+loadCPU path = do
   mem <- foldr (uncurry M.insert) M.empty . zip [0..] . read . (++ "]") . ('[' :) <$> readFile path
-  pure $ State { pc = 0, _input = [], _output = [], relBase = 0, .. }
+  pure $ CPU { pc = 0, _input = [], _output = [], relBase = 0, .. }
 
 run :: Int -> IO ()
 run k = do
-  s <- loadState "inputs/p5.txt"
-  let (State {..}, _) = unInterp trace s { _input = [k] }
+  s <- loadCPU "inputs/p5.txt"
+  let (CPU {..}, _) = runInterp trace s { _input = [k] }
   for_ _output print
 
 main1 = run 1
