@@ -3,11 +3,13 @@
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
 
 module P5 where
 
+import Control.Monad ( forever )
 import Data.Functor.Identity
 import qualified Data.IntMap.Strict as M
 import Data.List (intercalate)
@@ -17,7 +19,8 @@ import Data.Foldable ( for_ )
 import Data.Maybe (fromMaybe)
 import Data.Traversable ( for )
 
-import State
+import StateT
+import ExceptT
 
 type Mem = M.IntMap Int
 
@@ -100,7 +103,7 @@ decodeOp (split -> (m1:m2:m3:_, code)) = case code of
   7 -> (3, \[p1, p2, p3] -> Cond TLT (mode m1 p1) (mode m2 p2) (mode m3 p3))
   8 -> (3, \[p1, p2, p3] -> Cond TEQ (mode m1 p1) (mode m2 p2) (mode m3 p3))
   9 -> (1, \[p1] -> Rel (mode m1 p1))
-  _ -> error "invalid opcode"
+  _ -> error $ "invalid opcode " ++ show code
   where
     mode 0 = A
     mode 1 = I
@@ -132,38 +135,48 @@ modifyMem f CPU {..} = CPU { mem = f mem, .. }
 modifyPc :: (Int -> Int) -> CPU -> CPU
 modifyPc f CPU {..} = CPU {pc = f pc, .. }
 
+insert :: Addr -> Int -> Mem -> Mem
+insert = M.insert
+
 input :: Interp Int
-input = do
-  i:is <- gets _input
-  modify (_input' (const is))
-  pure i
+input = gets _input >>= \case
+  [] -> throwError Blocked
+  i : is -> do
+    modify (_input' (const is))
+    pure i
 
 output :: Int -> Interp ()
 output k = modify (_output' (++ [k]))
 
 newtype Interp a =
-  Interp { unInterp :: StateT CPU Identity a }
+  Interp { unInterp :: ExceptT Status (StateT CPU Identity) a }
   deriving (Functor, Applicative, Monad)
 
-runInterp :: Interp a -> CPU -> (CPU, a)
-runInterp (Interp f) s = runIdentity $ unState f s
+runInterp :: Interp a -> CPU -> (CPU, Either Status a)
+runInterp (Interp f) s = runIdentity $ unState (unExcept f) s
 
 instance MonadState Interp where
   type State Interp = CPU
   get = Interp get
   put = Interp . put
 
+instance MonadExcept Interp where
+  type Exc Interp = Status
+  throwError = Interp . throwError
+  catchError (Interp f) handle =
+    Interp $ catchError f (unInterp . handle)
+
 instance MonadFail Interp where
   fail = error
 
 -- | Tries to extract a value from the output queue.
--- Returns Nothing if there's no output.
-getOutput :: Interp (Maybe Int)
+-- Throws an exception if there's no output.
+getOutput :: Interp Int
 getOutput = gets _output >>= \case
-  [] -> pure Nothing
+  [] -> throwError NoOutput
   x : _output -> do
     modify (_output' (const _output))
-    pure (Just x)
+    pure x
 
 getRelBase :: Interp Int
 getRelBase = gets relBase
@@ -179,10 +192,12 @@ store i x = modify (modifyMem (M.insert i x))
 
 -- | Fetches the given number of entries from memory from the PC onwards.
 fetch :: Int -> Interp [Int]
-fetch k = do
+fetch = fetchOffset 0
+
+fetchOffset :: Int -> Int -> Interp [Int]
+fetchOffset off k = do
   pc <- gets pc
-  modifyPC (k+)
-  for [pc..pc+k-1] load'
+  for [off+pc..off+pc+k-1] load'
 
 modifyPC :: (Int -> Int) -> Interp ()
 modifyPC f = modify (modifyPc f)
@@ -202,70 +217,79 @@ loadParam (I n) = pure n
 loadParam x = load' =<< resolve x
 
 -- | Decodes an opcode, fetches its parameters, and constructs the
+-- instruction. Returns the number of parameters as well as the
 -- instruction.
-decode :: Int -> Interp Instr
+decode :: Int -> Interp (Int, Instr)
 decode code = do
   let (k, instr) = decodeOp code
-  instr <$> fetch k
+  i <- instr <$> fetchOffset 1 k
+  pure (k, i)
 
-data Status = Halt | Running
+data Status = Halt | Blocked | NoOutput
+  deriving Show
 
-execute :: Instr -> Interp Status
-execute Done = pure Halt
+-- | Returns true if a jump was executed. In this case, the PC should
+-- not be updated.
+execute :: Instr -> Interp Bool
+execute Done = throwError Halt
 execute (Arith (op2func -> op) p1 p2 dst) = do
   r1 <- loadParam p1
   r2 <- loadParam p2
   dst <- resolve dst
   store dst (r1 `op` r2)
-  pure Running
+  pure False
 execute (Input dst) = do
   n <- input
   dst <- resolve dst
   store dst n
-  pure Running
+  pure False
 execute (Output p) = do
   r <- loadParam p
   output r
-  pure Running
+  pure False
 execute (Cond (cond2func -> op) p1 p2 dst) = do
   r1 <- loadParam p1
   r2 <- loadParam p2
   dst <- resolve dst
   store dst (fromEnum $ r1 `op` r2)
-  pure Running
+  pure False
 execute (Jump (jump2func -> op) p1 p2) = do
   r <- loadParam p1
   dst <- loadParam p2
-  when (op r) $ jumpTo dst
-  pure Running
+  if op r then
+    jumpTo dst *> pure True
+  else
+    pure False
 execute (Rel p) = do
   r <- loadParam p
   modify (modifyRelBase (+ r))
-  pure Running
+  pure False
 
 -- | Run a fetch-decode-execute cycle.
-step :: Interp Status
-step = fetch 1 >>= decode . head >>= execute
-
--- | Runs the interpreter until it halts.
-trace :: Interp ()
-trace =
-  step >>= \case
-    Halt -> pure ()
-    Running -> trace
+step :: Interp ()
+step = do
+  (k, instr) <- decode . head =<< fetch 1
+  execute instr >>= \case
+    True -> pure ()
+    False ->
+      -- only modify the program counter after the execution of the
+      -- instruction.  instruction execution may raise an exception.  Some
+      -- exceptions are fatal, e.g. Halt but others are not, e.g. Blocked,
+      -- and must be resolved by the OS before trying the instruction
+      -- again.
+      modifyPC (+ (k+1))
 
 -- | Runs the interpreter until it generates an output,
--- removing the output from the output queue.
--- Returns Nothing if the interpreter halts before generating output.
-pump :: Interp (Maybe Int)
-pump = step >>= \case
-  Running -> maybe pump (pure . pure) =<< getOutput 
-  Halt -> pure Nothing
+pump :: Interp Int
+pump = step *>
+  getOutput `catchError` \case
+    NoOutput -> pump
+    e -> throwError e
 
 -- | Pushes the given integer to the computer state's input queue and
 -- pumps the computer for an output. Returns the new computer state
--- and the result, if any was generated before the computer halted.
-call' :: CPU -> [Int] -> (CPU, Maybe Int)
+-- and the result, if any was generated before the computer encountered an error.
+call' :: CPU -> [Int] -> (CPU, Either Status Int)
 call' s x = runInterp pump s { _input = _input s ++ x }
 
 -- | Pushes the given integers to the computer's input queue and pumps
@@ -273,13 +297,13 @@ call' s x = runInterp pump s { _input = _input s ++ x }
 -- Returns the generated outputs. If the length of the returned list
 -- is shorter than the desired number of outputs, it's because the
 -- computer halted.
-call'' :: CPU -> [Int] -> Int -> (CPU, [Int])
+call'' :: CPU -> [Int] -> Int -> (CPU, Either Status [Int])
 call'' s ins k = runInterp (go k) s { _input = _input s ++ ins } where
   go 0 = pure []
   go k = do
-    pump >>= \case
-      Nothing -> pure []
-      Just x -> (x :) <$> go (k-1)
+    (pump >>= \x -> (x :) <$> go (k-1)) `catchError` \case
+      Halt -> pure []
+      e -> throwError e
 
 loadCPU :: String -> IO CPU
 loadCPU path = do
@@ -289,7 +313,10 @@ loadCPU path = do
 run :: Int -> IO ()
 run k = do
   s <- loadCPU "inputs/p5.txt"
-  let (CPU {..}, _) = runInterp trace s { _input = [k] }
+  let (CPU {..}, x) = runInterp (forever step) s { _input = [k] }
+  case x of
+    Left e -> print e
+    Right x -> x -- impossible
   for_ _output print
 
 main1 = run 1

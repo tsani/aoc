@@ -3,17 +3,20 @@
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE TypeFamilies #-}
 
-module State where
-
-import Trans
-import ExceptT
+module StateT
+( MonadState(..), 
+  StateT(..),
+  gets,
+  modify
+)
+where
 
 import Control.Monad ( ap )
 
-class Monad m => MonadState m where
-  type State (m :: * -> *) :: *
-  get :: m (State m)
-  put :: State m -> m ()
+import ExceptClass
+import MonadIO
+import StateClass
+import Trans
 
 newtype StateT s m a =
   StateT { unState :: s -> m (s, a) }
@@ -29,23 +32,20 @@ instance Monad m => Monad (StateT s m) where
     (s', x) <- f s
     unState (k x) s'
 
+instance MonadTrans (StateT s) where
+  lift x = StateT $ \s -> (s,) <$> x
+
 instance Monad m => MonadState (StateT s m) where
   type State (StateT s m) = s
   -- get :: Monad m => StateT m s s
   get = StateT $ \s -> pure (s, s)
   put s = StateT $ \_ -> pure (s, ())
 
-instance MonadTrans (StateT s) where
-  lift x = StateT $ \s -> (s,) <$> x
-
-gets :: MonadState m => (State m -> s) -> m s
-gets f = f <$> get
-
-modify :: MonadState m => (State m -> State m) -> m ()
-modify f = put . f =<< get
-
 instance MonadExcept m => MonadExcept (StateT s m) where
   type Exc (StateT s m) = Exc m
   throwError = lift . throwError
   catchError (StateT x) h = StateT $ \s -> do
     catchError (x s) (flip unState s . h)
+
+instance MonadIO m => MonadIO (StateT s m) where
+  liftIO = lift . liftIO

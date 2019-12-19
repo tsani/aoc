@@ -7,7 +7,7 @@
 module P11 where
 
 import qualified P5 as I
-import State
+import StateT
 
 import Control.Monad ( forM_ )
 import Data.Functor.Identity
@@ -18,7 +18,7 @@ import qualified Data.Map as M
 import Data.Maybe ( fromJust )
 import Data.Tuple ( swap )
 
-import Prelude hiding (Left, Right) -- yuck
+import Prelude
 
 data V = V !Int !Int
   deriving (Eq, Ord, Read, Show)
@@ -33,15 +33,15 @@ vy (V _ y) = y
 V x1 y1 +! V x2 y2 = V (x1 + x2) (y1 + y2)
 
 data Dir =
-  Up | Right | Down | Left
+  GoUp | GoRight | GoDown | GoLeft
   deriving (Eq, Ord, Show, Read, Bounded, Enum)
 
 dir2displacement :: Dir -> V
 dir2displacement = \case
-  Up -> V 0 1
-  Down -> V 0 (-1)
-  Left -> V (-1) 0
-  Right -> V 1 0
+  GoUp -> V 0 1
+  GoDown -> V 0 (-1)
+  GoLeft -> V (-1) 0
+  GoRight -> V 1 0
 
 data Paint = Black | White
   deriving (Eq, Ord, Show, Read, Bounded, Enum)
@@ -69,7 +69,7 @@ applyPaintToGrid p paint = M.alter f p where
 data RobotState =
   RobotState
   { robotDir :: Dir
-  , robotComputer :: I.State
+  , robotComputer :: I.CPU
   , robotGrid :: Grid
   , robotPos :: V
   }
@@ -100,7 +100,7 @@ applyPaint paint = Robot $ do
 
 -- is this what deriving lenses is for???
   
-robotComputer' :: (I.State -> I.State) -> RobotState -> RobotState
+robotComputer' :: (I.CPU -> I.CPU) -> RobotState -> RobotState
 robotComputer' f s = s { robotComputer = f (robotComputer s) }
 
 robotGrid' :: (Grid -> Grid) -> RobotState -> RobotState
@@ -118,7 +118,7 @@ robotPos' f s = s { robotPos = f (robotPos s) }
 call :: [Int] -> Int -> Robot [Int]
 call ins k = Robot $ do
   s <- gets robotComputer
-  let (s', outs) = I.call'' s ins k
+  let (s', Right outs) = I.call'' s ins k
   modify (robotComputer' (const s'))
   pure outs
 
@@ -153,10 +153,10 @@ run = bool (pure ()) run =<< step
 
 loadState :: String -> IO RobotState
 loadState path = do
-  robotComputer <- I.loadState path
+  robotComputer <- I.loadCPU path
   pure RobotState
     { robotComputer
-    , robotDir = Up
+    , robotDir = GoUp
     , robotGrid = M.empty
     , robotPos = V 0 0
     }

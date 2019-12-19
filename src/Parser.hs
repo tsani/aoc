@@ -10,7 +10,7 @@ import Control.Monad ( ap )
 import Data.Functor.Identity
 
 import ExceptT
-import State
+import StateT
 import Trans
 
 data ParserState =
