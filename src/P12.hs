@@ -4,6 +4,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TupleSections #-}
 {-# LANGUAGE ViewPatterns #-}
 
@@ -12,11 +13,14 @@ module P12 where
 import Comonad
 import Parser
 
+import Control.Arrow
+import Data.Bifunctor ( bimap )
+import Data.Function ( on )
 import qualified Data.List.NonEmpty as N
 import Data.Maybe ( fromJust, fromMaybe )
 
 data VF a = V { _x :: !a, _y :: !a, _z :: !a }
-  deriving (Show, Foldable, Functor, Traversable) -- so I can use fmap later :)
+  deriving (Eq, Show, Foldable, Functor, Traversable) -- so I can use fmap later :)
 
 type V = VF Int
 
@@ -34,7 +38,7 @@ data Obj =
   { pos :: V
   , vel :: V
   }
-  deriving Show
+  deriving (Eq, Show)
 
 energy :: Obj -> Int
 energy Obj { .. } = pot * kin where
@@ -42,16 +46,11 @@ energy Obj { .. } = pot * kin where
   pot = e pos
   kin = e vel
 
+totalEnergy :: System -> Int
+totalEnergy = sum . fmap energy . toList
+
 static :: V -> Obj
 static pos = Obj { vel = zero, .. }
-
--- | Initial system. (Puzzle input.)
-initial =
-  [ static $ V 1 3 (-11)
-  , static $ V 17 10 (-8)
-  , static $ V (-1) (-15) 2
-  , static $ V 12 (-4) (-4)
-  ]
 
 -- | attract o1 o2 updates the velocity of o1 according to its
 -- attraction by o2.
@@ -74,7 +73,7 @@ step = fmap applyVelocity . (=>>) zAttract where
 
 loadSystem :: IO System
 loadSystem =
-  fromListR . N.fromList . map (static . parseV) . lines <$> readFile "inputs/p12-test1.txt"
+  fromListR . N.fromList . map (static . parseV) . lines <$> readFile "inputs/p12.txt"
 
 parseV :: String -> V
 parseV s = fromMaybe (error "parse failed") $ parse s $ do
@@ -87,3 +86,33 @@ parseV s = fromMaybe (error "parse failed") $ parse s $ do
   char '>'
   eof
   pure $ V x y z
+
+answer1 :: System -> Int
+answer1 = totalEnergy . (!! 1000) . iterate step
+
+-- | Finds all pairs of indices at which the raced entities become the same.
+-- The first result is always (0, 0) since they start identically.
+raceBy :: forall a. (a -> a -> Bool) -> (a -> a) -> a -> [(Int, Int)]
+raceBy p f z = map (fst *** fst) $ filter (\((i1, s1), (i2, s2)) -> p s1 s2) $ uncurry zip seqs where
+  seqs = zip [0..] `both` (iterate f z, iterate (f . f) z) where
+    both f = bimap f f
+
+-- answer2 :: System -> (Int, Int, Int)
+answer2 s = (x, y, z) where
+  raceCoord sel = {- (uncurry $ flip (-)) . -} (!! 1) . raceBy p step where
+    -- checks if two _systems_ are equal on all objects, for the given coordinate
+    p s1 s2 = all (uncurry pObj) $ N.zip (toList s1) (toList s2)
+    -- checks if two objects are equal on a given coordinate for position & velocity
+    pObj o1 o2 = sel (pos o1) == sel (pos o2) && sel (vel o1) == sel (vel o2)
+
+  -- race each coordinate separately
+  x = raceCoord _x s
+  y = raceCoord _y s
+  z = raceCoord _z s
+
+  -- calculate the lcm for each coordinate
+  -- p = lcm x (lcm y z)
+
+main2 :: IO ()
+main2 = do
+  print . take 2 . raceBy (==) step =<< loadSystem
