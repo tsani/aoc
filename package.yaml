@@ -23,9 +23,12 @@ executables:
     main:                Main.hs
     other-modules:
       - Comonad
+      - ExceptClass
       - ExceptT
+      - MonadIO
       - Parser
-      - State
+      - StateClass
+      - StateT
       - Trans
       - P1
       - P2
@@ -40,6 +43,9 @@ executables:
       - P10
       - P11
       - P12
+      - P13
+      - P14
+      - P15
     source-dirs:
       - app
       - src
@@ -47,5 +53,6 @@ executables:
       - -threaded
       - -rtsopts
       - -with-rtsopts=-N
+      - -O2
     dependencies:
       - containers <1.0

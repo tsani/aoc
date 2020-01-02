@@ -211,7 +211,7 @@ jumpTo k = modifyPC (const k)
 resolve :: Param -> Interp Addr
 resolve (A i) = pure i
 resolve (R i) = (i+) <$> getRelBase
-  
+
 loadParam :: Param -> Interp Int
 loadParam (I n) = pure n
 loadParam x = load' =<< resolve x
@@ -319,7 +319,9 @@ run k = do
     Right x -> x -- impossible
   for_ _output print
 
+queueInput :: Int -> Interp ()
+queueInput k = modify (_input' (++ [k]))
+
 main1 = run 1
 
 main2 = run 5
-  

@@ -6,8 +6,10 @@
 module Parser where
 
 import Control.Applicative
-import Control.Monad ( ap )
+import Control.Monad ( ap, void )
 import Data.Functor.Identity
+import Data.List.NonEmpty ( NonEmpty(..) )
+import qualified Data.List.NonEmpty as N
 
 import ExceptT
 import StateT
@@ -47,15 +49,27 @@ instance Alternative Parser where
 choice :: [Parser a] -> Parser a
 choice = foldr (<|>) empty
 
-satisfy :: (Char -> Bool) -> Parser ()
+satisfy :: (Char -> Bool) -> Parser Char
 satisfy p = do
   s <- gets input
   case s of
-    c : cs | p c -> modify (_input (const cs))
+    c : cs | p c -> modify (_input (const cs)) *> pure c
     _ -> throwError ()
 
-char :: Char -> Parser ()
+lower :: Parser Char
+lower = choice $ map char "qwertyuiopasdfghjklzxcvbnm"
+
+upper :: Parser Char
+upper = choice $ map char "QWERTYUIOPASDFGHJKLZXCVBNM"
+
+char :: Char -> Parser Char
 char c = satisfy (c ==)
+
+sepBy1 :: Parser a -> Parser () -> Parser (NonEmpty a)
+sepBy1 p sep = (:|) <$> p <*> many (sep *> p)
+
+sepBy :: Parser a -> Parser () -> Parser [a]
+sepBy p sep = N.toList <$> sepBy1 p sep <|> pure []
 
 eof :: Parser ()
 eof = gets input >>= \case
