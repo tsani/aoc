@@ -22,16 +22,12 @@ description:         Please see the README on GitHub at <https://github.com/tsan
 dependencies:
 - base >= 4.7 && < 5
 
-library:
-  source-dirs: src
-
 executables:
   aoc2020-exe:
     main:                Main.hs
-    source-dirs:         app
+    source-dirs:         src
     ghc-options:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
-    dependencies:
-    - aoc2020
+    dependencies: []
