@@ -1,4 +1,6 @@
 module Main where
 
+import Day10 (p2)
+
 main :: IO ()
-main = putStrLn "Hello world!"
+main = p2

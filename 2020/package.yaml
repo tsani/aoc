@@ -30,7 +30,11 @@ executables:
     - -threaded
     - -rtsopts
     - -with-rtsopts=-N
+    - -O2
+    default-extensions:
+      - TypeFamilies
     dependencies:
       - text
       - containers
       - monads-tf
+      - pretty-simple
