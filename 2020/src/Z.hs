@@ -1,19 +1,32 @@
+{-# LANGUAGE DeriveAnyClass #-}
 {-# LANGUAGE DeriveFoldable #-}
-{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE DeriveFunctor #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveTraversable #-}
 
 module Z where
 
+import Control.DeepSeq
 import Data.Maybe ( fromJust )
 import Data.List.NonEmpty ( NonEmpty(..) )
 import qualified Data.List.NonEmpty as N
+import GHC.Generics
 
 import Comonad
 import Util ( iterateMaybe )
 
 -- | A zipper for @a@.
 data Z a = Z [a] a [a]
-  deriving (Eq, Ord, Functor, Show, Foldable, Traversable)
+  deriving
+    ( Eq
+    , Foldable
+    , Functor
+    , Generic
+    , NFData
+    , Ord
+    , Show
+    , Traversable
+    )
 
 instance Comonad Z where
   duplicate z = Z (tail $ lefts z) z (tail $ rights z)
@@ -96,3 +109,6 @@ modify f (Z ls x rs) = Z ls (f x) rs
 
 nice :: (a -> Char) -> Z a -> String
 nice f (Z ls x rs) = (f <$> reverse ls) ++ '|' : f x : '|' : (f <$> rs)
+
+length :: Z a -> Int
+length (Z ls x rs) = Prelude.length ls + 1 + Prelude.length rs

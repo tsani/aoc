@@ -31,6 +31,7 @@ executables:
     - -rtsopts
     - -with-rtsopts=-N
     - -O3
+    - -fprof-auto
     default-extensions:
       - TypeFamilies
       - ViewPatterns
@@ -42,3 +43,4 @@ executables:
       - monads-tf
       - pretty-simple
       - vector
+      - deepseq

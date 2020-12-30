@@ -10,7 +10,7 @@ import Control.Monad ( (>=>), mapM_ )
 
 import Comonad
 import ZZ
-import Util ( iterateMaybe1 )
+import Util ( iterateMaybe1, fix )
 
 
 data Tile = Floor | Empty | Occupied deriving (Eq, Show)
@@ -23,11 +23,6 @@ p2 = print . (go (`cobind` rule2)) . parse =<< readFile "input/day11.txt"
 
 pairs :: [a] -> [(a, a)]
 pairs l = zip l (tail l)
-
--- | Repeats a function until it reaches a fixed point.
-fix :: Eq a => (a -> a) -> a -> a
-fix f x = if x == y then x else f `fix` y where
-  y = f x
 
 t2c = \case
   Floor -> '.'
