@@ -1,6 +1,6 @@
 use std::fs;
 use std::io::{self, BufRead};
-use std::path::Path;
+use std::mem;
 
 #[derive(Debug)]
 struct BingoSquare {
@@ -16,6 +16,12 @@ impl BingoSquare {
 
 #[derive(Debug)]
 struct BingoCard(Vec<Vec<BingoSquare>>);
+
+impl Default for BingoCard {
+    fn default() -> Self {
+        BingoCard(Vec::default())
+    }
+}
 
 impl BingoCard {
     fn new(v: Vec<Vec<BingoSquare>>) -> BingoCard {
@@ -93,51 +99,75 @@ struct Puzzle {
     cards: Vec<BingoCard>,
 }
 
-fn next_or_die<T, I: Iterator<Item = T>>(it: &mut I) -> T {
-    match it.next() {
-        Some(x) => x,
-        None => panic!("No next item!"),
+trait IteratorExt: Iterator {
+    fn next_or_die(&mut self) -> Self::Item {
+        match self.next() {
+            Some(x) => x,
+            None => panic!("no other item!"),
+        }
     }
 }
 
-fn parse_boards<I: Iterator<Item = String>>(mut it: &mut I) -> Vec<BingoCard> {
-    let mut boards = Vec::<BingoCard>::new();
+impl<T: Iterator> IteratorExt for T {}
+
+fn parse_cards<I: Iterator<Item = String>>(it: &mut I) -> Vec<BingoCard> {
+    let mut cards = Vec::<BingoCard>::new();
     loop {
-        boards.push(BingoCard::new(
+        let card = BingoCard::new(
             (0..5)
                 .map(|_i| {
-                    next_or_die(&mut it)
+                    it.next_or_die()
                         .split(" ")
                         .filter(|x| !x.is_empty())
                         .map(|x| BingoSquare::new(x.parse::<i32>().unwrap(), false))
                         .collect::<Vec<_>>()
                 })
-                .collect::<Vec<_>>(),
-        ));
+                .collect(),
+        );
+        cards.push(card);
         match it.next() {
-            None => return boards,
+            None => return cards,
             Some(x) if x.is_empty() => continue,
             _ => panic!("unexpected file contents"),
         }
     }
 }
 
-fn parse_puzzle(puzzleText: String) -> Puzzle {
-    let mut it = puzzleText.split("\n").map(|x| String::from(x));
-    let random_numbers: Vec<i32> = next_or_die(&mut it)
+fn parse_puzzle<I: Iterator<Item = String>>(mut it: I) -> Puzzle {
+    let random_numbers: Vec<i32> = it
+        .next_or_die()
         .split(",")
         .map(|x| x.parse::<i32>().unwrap())
         .collect();
-    let _skip = next_or_die(&mut it);
-    let cards = parse_boards(&mut it);
+    let _skip = it.next_or_die();
+    let cards = parse_cards(&mut it);
     Puzzle {
         random_numbers,
         cards,
     }
 }
 
+fn first_winning_card(p: Puzzle) -> Option<(i32, BingoCard)> {
+    let numbers = p.random_numbers;
+    let mut cards = p.cards;
+    for x in numbers.iter() {
+        for c in cards.iter_mut() {
+            c.check(*x);
+            if c.wins() {
+                return Some((*x, mem::take(c)));
+            }
+        }
+    }
+    None
+}
+
+fn card_score(c: &BingoCard) -> i32 {}
+
 fn main() {
-    let puzzle = parse_puzzle(fs::read_to_string("input/day4.txt").unwrap());
+    let b = io::BufReader::new(fs::File::open("input/day4.txt").unwrap())
+        .lines()
+        .map(|x| String::from(x.unwrap()));
+    let puzzle = parse_puzzle(b);
 
     println!("{:?}", puzzle);
 }
