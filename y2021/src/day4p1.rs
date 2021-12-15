@@ -49,6 +49,10 @@ impl BingoCard {
         }
         return false;
     }
+
+    fn score(&self) -> i32 {
+        self.0.iter().fold(0, |sum, x| sum + x.iter().filter(|x| !x.checked).map(|x| x.number).sum::<i32>())
+    }
 }
 
 fn find_entry<'a, T, F>(v: &'a mut Vec<T>, predicate: F) -> Option<&'a mut T>
@@ -161,13 +165,16 @@ fn first_winning_card(p: Puzzle) -> Option<(i32, BingoCard)> {
     None
 }
 
-fn card_score(c: &BingoCard) -> i32 {}
-
 fn main() {
     let b = io::BufReader::new(fs::File::open("input/day4.txt").unwrap())
         .lines()
         .map(|x| String::from(x.unwrap()));
     let puzzle = parse_puzzle(b);
 
-    println!("{:?}", puzzle);
+    if let Some ((last_called_number, winning_card)) = first_winning_card(puzzle) {
+        println!("{}", winning_card.score() * last_called_number);
+    } else {
+        panic!("yikes");
+    }
+
 }
