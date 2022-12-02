@@ -1,4 +1,6 @@
 module Main (main) where
 
+import qualified Day2 (main)
+
 main :: IO ()
-main = putStrLn "hi"
+main = Day2.main
