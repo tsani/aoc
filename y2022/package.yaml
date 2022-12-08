@@ -21,6 +21,8 @@ description:         Please see the README on GitHub at <https://github.com/tsan
 
 dependencies:
 - base >= 4.7 && < 5
+- containers
+- vector
 
 ghc-options:
 - -Wall
