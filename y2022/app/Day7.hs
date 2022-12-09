@@ -75,7 +75,6 @@ parse input = parseCommands $ lines input where
     ["$", "cd", "/"] -> CD Root : parseCommands lines
     ["$", "cd", ".."] -> CD Up : parseCommands lines
     ["$", "cd", name] -> CD (Down name) : parseCommands lines
-    l -> error $ "wat " ++ show l
     
   parseOutput lines =
     let (output, lines') = break ((== '$') . head) lines in
