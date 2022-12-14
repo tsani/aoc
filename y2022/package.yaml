@@ -24,6 +24,8 @@ dependencies:
 - containers
 - vector
 - comonad
+- adjunctions
+- distributive
 
 ghc-options:
 - -Wall
