@@ -45,29 +45,34 @@ parse input k = sizedGrid result $ \grid -> k $ Input { grid, start, stop } wher
   char2height 'E' = 25
   char2height c = fromEnum c - fromEnum 'a'
 
-findMinimalDistance :: forall h w. KnownSize h w => Loc h w -> GridZ h w Height -> [Distance]
-findMinimalDistance dst = map (fst . extract) . iterate step . setup where
-  inf = 1000000
-  setup = fmap (inf, )
-  step :: GridZ h w (Distance, Height) -> GridZ h w (Distance, Height)
-  step = extend k where
-    k g = (if pos g == dst then 0 else f (dir g), snd . extract $ g) where
-      (_, h) = extract g
-      f :: Dir (Maybe (GridZ h w (Distance, Height))) -> Distance
-      f = (1+) . min4 . fmap (maybe inf (j . extract)) where
-        j :: (Distance, Height) -> Distance
-        j (d, h')
-          | h' <= h + 1 = d
-          | otherwise = inf
+inf = 1000000
 
-answer1 :: String -> Int
-answer1 input = parse input go where
+step :: forall h w. KnownSize h w => Loc h w -> GridZ h w (Distance, Height) -> GridZ h w (Distance, Height)
+step dst = extend k where
+  k g = (if pos g == dst then 0 else f (dir g), snd . extract $ g) where
+    (_, h) = extract g
+    f :: Dir (Maybe (GridZ h w (Distance, Height))) -> Distance
+    f = (1+) . min4 . fmap (maybe inf (j . extract)) where
+      j :: (Distance, Height) -> Distance
+      j (d, h')
+        | h' <= h + 1 = d
+        | otherwise = inf
+
+findMinimalDistance :: forall h w. KnownSize h w => Loc h w -> GridZ h w Height -> [Distance]
+findMinimalDistance dst = map (fst . extract) . iterate (step dst) . fmap (inf,)
+
+findMinimalDistanceAnywhere :: forall h w. KnownSize h w => Loc h w -> GridZ h w Height -> [Distance]
+findMinimalDistanceAnywhere dst =
+  map (minimum . map fst . filter ((0 ==) . snd) . concat . materialize) . iterate (step dst) . fmap (inf,)
+
+answer2 :: String -> Int
+answer2 input = parse input go where
   go :: KnownSize h w => Input h w -> Int
   go Input { grid, start, stop } =
-    f . dropWhile (> 10000) . findMinimalDistance stop . gridz start $ grid where
+    f . dropWhile (> 10000) . findMinimalDistanceAnywhere stop . gridz start $ grid where
       f (x:y:z:xs)
         | x == y && y == z = x
         | otherwise = f xs
 
 main :: IO ()
-main = print . answer1 =<< readFile "input/day12.txt"
+main = print . answer2 =<< readFile "input/day12.txt"

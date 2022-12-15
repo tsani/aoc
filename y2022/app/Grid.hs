@@ -1,4 +1,4 @@
-{-# LANGUAGE DeriveFunctor, DeriveTraversable, DeriveFoldable, NamedFieldPuns #-}
+{-# LANGUAGE DeriveFunctor, DeriveTraversable, DeriveFoldable, NamedFieldPuns, BangPatterns #-}
 {-# LANGUAGE TypeFamilies, DataKinds, GADTs, DerivingStrategies, DerivingVia, ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications, GeneralizedNewtypeDeriving, RankNTypes, ConstraintKinds #-}
 
@@ -16,6 +16,8 @@ module Grid
    , move
    , lookEverywhere
    , materialize
+   , Fin
+   , unFin
    , fin
    , fin'
    , KnownSize
@@ -125,12 +127,12 @@ gridz0 = gridz (Fin 0, Fin 0)
 -- | Gets the grids that result from moving in each direction.
 dir :: forall h w a. KnownSize h w  => GridZ h w a -> Dir (Maybe (GridZ h w a))
 dir g = jump <$> ((+++) <$> pure (i, j) <*> dirVecs) <*> pure g where
-  (Fin i, Fin j) = pos g
-  (x1, y1) +++ (x2, y2) = (x1 + x2, y1 + y2)
+  (Fin !i, Fin !j) = pos g
+  (!x1, !y1) +++ (!x2, !y2) = (x1 + x2, y1 + y2)
 
 -- | Perform an absolute movement in a grid.
 jump :: forall h w a. KnownSize h w  => (Int, Int) -> GridZ h w a -> Maybe (GridZ h w a)
-jump (i, j) g = seek <$> bisequenceA (fin i, fin j) <*> pure g
+jump (!i, !j) g = seek <$> bisequenceA (fin i, fin j) <*> pure g
 
 -- | Perform multiple relative movements in a grid.
 move :: KnownSize h w => (Int, Int) -> GridZ h w a -> Maybe (GridZ h w a)
@@ -152,29 +154,3 @@ materialize :: KnownSize h w => GridZ h w a -> [[a]]
 materialize = rows . seek (Fin 0, Fin 0) where
   row g = extract g : maybe [] row (right . dir $ g)
   rows g = row g : maybe [] rows (down . dir $ g)
-
--- instance Comonad GridZ where
---   extract = here
---   duplicate g = g' where
---     g' = GridZ
---       { here = g
---       , index = index g
---       , dir = fmap duplicate <$> dir g
---       }
--- 
--- gridz :: (Int, Int) -> Grid a -> GridZ a
--- gridz (i, j) g = g' where
---   g' = GridZ
---     { here = g `at` (i, j)
---     , index = (i, j)
---     , dir = (\x -> gridz <$> x <*> pure g) <$> moves
---     }
---   moves = Dir
---     { up = if i > 0 then Just (i-1, j) else Nothing
---     , down = if i < h - 1 then Just (i+1, j) else Nothing
---     , right = if j < w - 1 then Just (i, j+1) else Nothing
---     , left = if j > 0 then Just (i, j-1) else Nothing
---     }
---   h = V.length (unGrid g)
---   w = V.length (unGrid g V.! 0)
--- 
