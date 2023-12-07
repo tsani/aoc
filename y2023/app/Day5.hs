@@ -72,14 +72,16 @@ data Mapping = Mapping { src :: Name, dst :: Name, apply :: Id -> Id }
 -- than a given one. So each each function will run in log n time where n is
 -- around 20 or 30 tops. BST go brrrrrr
 
+rangesToMap :: [Range] -> M.IntMap (Id, Len)
+rangesToMap =
+  M.fromList .
+  map (\Range { dstStart, srcStart, len } -> (srcStart, (dstStart, len)))
+
 compile :: RawMapping -> Mapping
 compile RawMapping { rawSrc, rawDst, ranges } =
   Mapping { src = rawSrc, dst = rawDst, apply }
   where
-    internalMap =
-      M.fromList .
-      map (\Range { dstStart, srcStart, len } -> (srcStart, (dstStart, len))) $
-      ranges
+    internalMap = rangesToMap ranges
 
     apply :: Id -> Id
     apply src = case M.lookupLE src internalMap of
@@ -95,7 +97,7 @@ composeMappings :: Mapping -> Mapping -> Mapping
 composeMappings m1 m2 =
   Mapping { src = src m2, dst = dst m1, apply = apply m2 . apply m1 }
 
--- SOLUTION -------------------------------------------------------------------
+-- SOLUTION TO PART 1 ---------------------------------------------------------
 -- Compile all mappings, compose, run all seeds through, see which location is
 -- smallest.
 
@@ -111,8 +113,69 @@ answer1 Problem { startSeeds, mappings = rawMappings } = smallest where
     foldr composeMappings (idMapping "X") $
     map compile rawMappings
 
+-- SOLUTION TO PART 2 ---------------------------------------------------------
+
+-- So simply running the seeds through the composed function isn't going to cut
+-- it anymore. Now we're dealing with ranges, so perhaps finding a way to run a
+-- range through a mapping quickly will solve the problem. The issue is that
+-- the input range might map into multiple different output ranges.
+
+data Interval = I { istart :: !Int, ilen :: !Int }
+  deriving Show
+
+type InternalMapping = Interval -> [Interval]
+
+compileIntervalMapping :: RawMapping -> IntervalMapping
+compileIntervalMapping RawMapping { ranges } = f where
+  internalMap = rangesToMap ranges
+
+  -- | Considers the overlap of two intervals.
+  -- `cut inner outer` sees whether `inner` fits inside of `outer`. If it
+  -- doesn't it cuts it.
+  -- Situation 1: it fits, so we output Nothing; no cut is necessary
+  --    |----------inner----------|
+  -- |---------------outer-------------|
+  --
+  -- Situation 2: it goes past the end, so we output 2 intervals obtained by
+  -- cutting the inner interval in two at the boundary of the outer interval.
+  --       |------------inner-------------------|
+  -- |------------outer-------|
+  --       |----output 1------|----output 2-----|
+  cut :: Interval -> Interval -> Maybe (Interval, Interval)
+  cut !inner !outer
+    -- the inner interval fits entirely inside the outer
+    | remaining >= ilen inner = Nothing
+    | otherwise =
+      Just
+        ( I { istart = istart inner, ilen = remaining }
+        , I { istart = istart outer, ilen = ilen inner - remaining }
+        )
+    where
+      remaining = istart outer + ilen outer - istart inner
+
+  f (I { istart, ilen })@i
+    | istart >= ilen = []
+    | otherwise = case M.lookupLE istart internalMap of
+      Just (src, (dst, len))
+        -- the Just tells us that src <= istart
+        -- the src falls inside the range on the left
+        | istart < src + len -> case cut i (I dst len) of
+          Nothing ->
+
+        | otherwise -> case M.lookupGT istart internalMap of
+        -- why GT not GE? Well if it is equal, then we would have fallen into
+        -- the LE case earlier, so we only need to check GT.
+          Just (src, (dst, len)) ->
+            -- the part mapped to identity is [istart,src)
+            -- since src > istart, this interval is nonempty
+
+
+debug Problem { startSeeds } = sum $ decomposeRanges startSeeds where
+  decomposeRanges [] = []
+  decomposeRanges (start:len:rest) = len : decomposeRanges rest
+
 main :: IO ()
 main = withFile "input/day5.txt" ReadMode $ \h ->
-  print =<< answer1 . parse <$> hGetContents h
+  print =<< debug . parse <$> hGetContents h
 
 readInput = readFile "input/day5.txt"
