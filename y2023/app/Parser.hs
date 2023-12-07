@@ -7,6 +7,9 @@ module Parser
   , string
   , sepBy
   , number
+  , spaces
+  , newline
+  , letters
   ) where
 
 import Control.Applicative
@@ -46,3 +49,12 @@ sepBy p sep = (:) <$> p <*> many (sep *> p) <|> pure []
 
 number :: Parser Int
 number = read <$> some (satisfy isDigit)
+
+spaces :: Parser ()
+spaces = void $ some (string " ")
+
+newline :: Parser ()
+newline = string "\n"
+
+letters :: Parser String
+letters = some (satisfy isLetter)

@@ -6,16 +6,16 @@
 
 module Day3 where
 
+import Control.Arrow
+import Control.Comonad.Representable.Store (Store(..), StoreT(..), runStore, store, experiment)
+import Control.Comonad(Comonad(..))
 import Data.Char
 import Data.Distributive (Distributive(..))
 import Data.Functor.Rep (Representable(..), distributeRep)
 import Data.Functor.Identity (Identity(..))
+import Data.List (nub)
 import Data.Vector (Vector(..))
 import Data.Vector qualified as V
-import Control.Comonad.Representable.Store (Store(..), StoreT(..), runStore, store, experiment)
-import Control.Comonad(Comonad(..))
-
-import Parser
 
 -- following: https://chrispenner.ca/posts/conways-game-of-life
 
@@ -26,10 +26,12 @@ newtype VBounded a = VBounded { unBounded :: Vector (Vector a) }
 
 type Digit = Int
 
-data Square = Blank | Digit Digit | Symbol Char
+data BasicSquare = BasicBlank | BasicDigit Digit | BasicSymbol Char
   deriving (Eq, Ord, Show)
 
-isDigitSquare (Digit _) = True
+data Square = Blank | Digit { digit :: Digit, number :: Int, tag :: Int } | Symbol Char
+
+isDigitSquare (Digit {}) = True
 isDigitSquare _ = False
 
 isSymbolSquare (Symbol _) = True
@@ -84,7 +86,7 @@ inBounds :: Grid a -> Bool
 inBounds g = (0 <= i && i < gridSize) && (0 <= j && j < gridSize) where
   (_, (i, j)) = runStore g
 
--- SOLUTION -------------------------------------------------------------------
+-- SOLUTION TO PART 1 ---------------------------------------------------------
 
 -- | A cell C is a _leader_ when it satisfies the following condition:
 -- - It does not have a digit on the left
@@ -100,9 +102,9 @@ solve = extend rule where
   rule g = case snd $ extract g of
     Blank -> 0
     Symbol _ -> 0
-    Digit _ | digitOnLeft -> 0
-    Digit _ | symbolAdjacentToNumber -> representedNumber
-    Digit _ | otherwise -> 0
+    Digit {} | digitOnLeft -> 0
+    Digit { number } | symbolAdjacentToNumber -> number
+    Digit {} | otherwise -> 0
     where
       (_, (i, j)) = runStore g -- get the coords of the cell under consideration
 
@@ -111,15 +113,23 @@ solve = extend rule where
 
       onLeftBoundary = j == 0
 
-      (symbolAdjacentToNumber, representedNumber) = scanEast g (False, 0)
+      symbolAdjacentToNumber = scanEast g False
 
-      scanEast :: Grid (SymbolAdjacent, Square) -> (SymbolAdjacent, Int) -> (SymbolAdjacent, Int)
-      scanEast g (!symAdj, !acc)
-        | j >= gridSize = (symAdj, acc)
-        | j < gridSize = case extract g of
-          (symAdj', Digit d) ->
-            scanEast (east g) (symAdj' || symAdj, 10*acc + d)
-          _ -> (symAdj, acc)
+      scanEast = foldEast $ \sq !symAdj -> case sq of
+        (symAdj', Digit _ _ _) -> Just (symAdj' || symAdj)
+        (_, _) -> Nothing
+
+-- | Fold over the elements of the grid at the current position going east.
+--This is kind of unusual because we want to be able to signal when to stop, so
+--I threw in a Maybe.
+foldEast :: (a -> b -> Maybe b) -> Grid a -> b -> b
+foldEast f g !acc
+  | j >= gridSize = acc
+  | j < gridSize = case f (extract g) acc of
+    Nothing -> acc
+    Just acc -> foldEast f (east g) acc
+  where
+    (_, (i, j)) = runStore g
 
 checkSymbolAdjacent :: Grid Square -> Grid (SymbolAdjacent, Square)
 checkSymbolAdjacent = extend rule where
@@ -132,24 +142,77 @@ answer1 =
   V.sum .
   V.map V.sum .
   unBounded .
-  tabulate @VBounded .
+  tabulate .
   fst .
   runStore .
   solve .
   checkSymbolAdjacent .
   vboundedToGrid
 
+-- SOLUTION TO PART 2 ---------------------------------------------------------
+
+-- I can reuse part of part 1 for this, can't I?
+-- In the grid where we found all the leaders
+-- Maybe it's best not to.
+-- What if I find all the numbers in the grid _and numbered them?_
+-- Basically doing clustering on the digits and assigning a label to each
+-- cluster.
+-- Then for each gear I can just look at how many unique labels are among its
+-- neighbours!
+-- Actually fuck that. Let's just use the fact that next to a * we never have
+-- the same number twice. Therefore, we can use the value of each part number
+-- as the unique tag itself.
+
+solve2 :: Grid Square -> Grid Int
+solve2 = extend rule where
+  -- idea: map each '*' in the grid to its gear ratio and everything else to 0
+  rule :: Grid Square -> Int
+  rule g
+    | Symbol '*' <- extract g
+    , [n1, n2] <- neighbourValues = n1 * n2
+    | otherwise = 0
+    where
+      neighbourValues =
+        nub .
+        filter (>0) .
+        map (digitValue . extract . ($ g)) $
+        neighbours
+
+      digitValue (Digit { number }) = number
+      digitValue _ = 0
+
+answer2 :: Input -> Int
+answer2 =
+  V.sum . V.map V.sum .
+  unBounded . tabulate .
+  fst . runStore .
+  solve2 .
+  vboundedToGrid
+
 -- PARSING --------------------------------------------------------------------
 
-parse :: String -> Input
-parse = VBounded . V.fromList . map (V.fromList . map square) . lines where
+preprocess :: [[BasicSquare]] -> Input
+preprocess = VBounded . V.fromList . map (V.fromList . fst . go 0) where
+  -- idea: loop over the line to parse the digits into numbers
+  -- keep an accumulator that we use to build up the number
+  -- but we can only tag the current digit after seeing what's on the right!
+  -- So we return not only the rest of the list, parsed, but also the number
+  go acc [] = ([], acc)
+  go acc (c:cs) = case c of
+    BasicBlank -> (Blank : fst (go 0 cs), acc)
+    BasicSymbol c -> (Symbol c : fst (go 0 cs), acc)
+    BasicDigit digit -> case go (10*acc + digit) cs of
+      (rest, number) -> (Digit { digit, number } : rest, number)
+
+parse :: String -> [[BasicSquare]]
+parse = map (map square) . lines where
   square = \case
-    '.' -> Blank
-    c | isDigit c -> Digit (read $ pure c)
-    c | isSymbol c || isPunctuation c -> Symbol c
+    '.' -> BasicBlank
+    c | isDigit c -> BasicDigit (read $ pure c)
+    c | isSymbol c || isPunctuation c -> BasicSymbol c
     c -> error $ "unknown character: " ++ show c
 
 -- MAIN -----------------------------------------------------------------------
 
 main :: IO ()
-main = print =<< answer1 . parse <$> readFile "input/day3.txt"
+main = print =<< (answer1 &&& answer2) . preprocess . parse <$> readFile "input/day3.txt"
