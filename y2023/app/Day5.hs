@@ -3,6 +3,7 @@
 module Day5 where
 
 import Control.Applicative
+import Control.Monad
 import Data.IntMap.Strict qualified as M
 import Data.Maybe (fromJust)
 import System.IO
@@ -123,59 +124,94 @@ answer1 Problem { startSeeds, mappings = rawMappings } = smallest where
 data Interval = I { istart :: !Int, ilen :: !Int }
   deriving Show
 
-type InternalMapping = Interval -> [Interval]
+type IntervalMapping = Interval -> [Interval]
+
+-- | Considers the overlap of two intervals.
+-- `cut inner outer` sees whether `inner` fits inside of `outer`. If it
+-- doesn't it cuts it.
+-- Situation 1: it fits, so we output Nothing; no cut is necessary
+--    |----------inner----------|
+-- |---------------outer-------------|
+--
+-- Situation 2: it goes past the end, so we output 2 intervals obtained by
+-- cutting the inner interval in two at the boundary of the outer interval.
+--       |------------inner-------------------|
+-- |------------outer-------|
+--       |----output 1------|----output 2-----|
+cut :: Interval -> Interval -> Maybe (Interval, Interval)
+cut !inner !outer
+  -- the inner interval fits entirely inside the outer
+  | remaining >= ilen inner = Nothing
+  | otherwise =
+    Just
+      ( I { istart = istart inner, ilen = remaining }
+      , I { istart = istart outer, ilen = ilen inner - remaining }
+      )
+  where
+    remaining = istart outer + ilen outer - istart inner
 
 compileIntervalMapping :: RawMapping -> IntervalMapping
 compileIntervalMapping RawMapping { ranges } = f where
   internalMap = rangesToMap ranges
 
-  -- | Considers the overlap of two intervals.
-  -- `cut inner outer` sees whether `inner` fits inside of `outer`. If it
-  -- doesn't it cuts it.
-  -- Situation 1: it fits, so we output Nothing; no cut is necessary
-  --    |----------inner----------|
-  -- |---------------outer-------------|
-  --
-  -- Situation 2: it goes past the end, so we output 2 intervals obtained by
-  -- cutting the inner interval in two at the boundary of the outer interval.
-  --       |------------inner-------------------|
-  -- |------------outer-------|
-  --       |----output 1------|----output 2-----|
-  cut :: Interval -> Interval -> Maybe (Interval, Interval)
-  cut !inner !outer
-    -- the inner interval fits entirely inside the outer
-    | remaining >= ilen inner = Nothing
-    | otherwise =
-      Just
-        ( I { istart = istart inner, ilen = remaining }
-        , I { istart = istart outer, ilen = ilen inner - remaining }
-        )
-    where
-      remaining = istart outer + ilen outer - istart inner
-
-  f (I { istart, ilen })@i
-    | istart >= ilen = []
+  f i@(I { istart, ilen })
+    | ilen <= 0 = []
     | otherwise = case M.lookupLE istart internalMap of
-      Just (src, (dst, len))
-        -- the Just tells us that src <= istart
-        -- the src falls inside the range on the left
-        | istart < src + len -> case cut i (I dst len) of
-          Nothing ->
+    Nothing -> case M.lookupGT istart internalMap of
+      Nothing -> error "empty map!?"
 
-        | otherwise -> case M.lookupGT istart internalMap of
-        -- why GT not GE? Well if it is equal, then we would have fallen into
-        -- the LE case earlier, so we only need to check GT.
-          Just (src, (dst, len)) ->
+      Just (src, (dst, len))
+        -- |-------i-------|
+        --                   |----i'----|
+        -- they're disjoint, so map to identity
+        | istart + ilen < src -> [i]
+        -- |-------i-------|
+        --              |----i'----|
+        -- they're disjoint, so map to identity
+        | otherwise ->
+          I istart (src - istart) : f (I src (ilen - src + istart))
+
+    -- the Just tells us that src <= istart
+    Just (src, (dst, len))
+      -- check: the input interval starts inside the range on the left?
+      | istart < src + len ->
+        -- decide: the input interval needs to be cut?
+        case cut i (I src len) of
+          -- no, it falls entirely inside the looked up interval
+          Nothing -> [I (istart - src + dst) ilen]
+          Just (I istart ilen, i2) ->
+            -- map the part that does fit, and then recurse on the part that
+            -- doesn't; should essentially jump to the follwoing 'otherwise'.
+            I (istart - src + dst) ilen : f i2
+
+      -- the input interval starts after the end of the map interval on the
+      -- left, so we need to figure out where the _next_ interval on the
+      -- right starts
+      | otherwise -> case M.lookupGT istart internalMap of
+      -- why GT not GE? Well if it is equal, then we would have fallen into
+      -- the LE case earlier, so we only need to check GT.
+        Just (src, (dst, len))
+          | istart + ilen < src -> [i]
+          | otherwise ->
             -- the part mapped to identity is [istart,src)
             -- since src > istart, this interval is nonempty
+            I istart (src - istart) : f (I src (ilen - src + istart))
 
+        Nothing -> -- then the whole thing maps to identity
+          [I istart ilen]
 
-debug Problem { startSeeds } = sum $ decomposeRanges startSeeds where
-  decomposeRanges [] = []
-  decomposeRanges (start:len:rest) = len : decomposeRanges rest
+debug Problem { startSeeds, mappings } = (first, startIntervals) where
+  first = head maps
+  maps = map compileIntervalMapping mappings
+  composed = foldr (>=>) pure maps
+
+  startIntervals = go startSeeds where
+    go [] = []
+    go (istart:ilen:rest) = I istart ilen : go rest
 
 main :: IO ()
-main = withFile "input/day5.txt" ReadMode $ \h ->
-  print =<< debug . parse <$> hGetContents h
+main = putStrLn "hello world!"
+ --  withFile "input/day5.txt" ReadMode $ \h ->
+ --  print =<< debug . parse <$> hGetContents h
 
 readInput = readFile "input/day5.txt"

@@ -10,6 +10,8 @@ module Parser
   , spaces
   , newline
   , letters
+  , exactly
+  , anyChar
   ) where
 
 import Control.Applicative
@@ -40,6 +42,9 @@ satisfy p = Parser $ \case
 char :: Char -> Parser ()
 char c = void $ satisfy (c ==)
 
+anyChar :: Parser Char
+anyChar = satisfy (const True)
+
 string :: String -> Parser ()
 string [] = pure ()
 string (c : cs) = char c *> string cs
@@ -58,3 +63,7 @@ newline = string "\n"
 
 letters :: Parser String
 letters = some (satisfy isLetter)
+
+exactly :: Int -> Parser a -> Parser [a]
+exactly 0 p = pure []
+exactly n p = (:) <$> p <*> exactly (n-1) p
