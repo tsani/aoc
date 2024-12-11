@@ -26,6 +26,7 @@ dependencies:
 - comonad
 - adjunctions
 - distributive
+- deepseq
 
 ghc-options:
 - -Wall

@@ -16,7 +16,7 @@ import Data.Maybe ( fromJust )
 import qualified Data.Set as S
 import qualified Data.Vector as V
 
-data Pair a = Pair a a
+data Pair a = Pair !a !a
   deriving (Functor, Traversable, Foldable, Eq, Ord, Show)
 
 pfst, psnd :: Pair a -> a
@@ -88,21 +88,21 @@ type SandGrid h w = GridZ h w Tile
 -- The grid is initially positioned at (500, 0) (in problem coordinates), where
 -- the sand starts falling.
 setup :: Input -> (forall h w. KnownSize h w => SandGrid h w -> r) -> r
-setup input k = G.sizedGrid v (k . G.gridz (G.fin' 0, G.fin' $ 500 - pfst offset)) where
+setup input k = G.sizedGrid v (k . G.gridz (G.fin' 0, G.fin' 500)) where
   s = S.fromList (expandInput input)
   Pair offset maxs =
     (Pair (pure minimum <*>) (pure maximum <*>)) <*> (pure $ distribute $ expandInput input)
 
   Pair width _ = (-) <$> maxs <*> offset
-  v = V.generate (psnd maxs + 1) $ \j -> V.generate (width + 1) $ \i ->
+  v = V.generate (psnd maxs + 3) $ \j -> V.generate 1000 $ \i ->
+    if j == psnd maxs + 2 then Rock else
     if Pair (pfst offset + i) j `S.member` s then Rock else Air
-
 
 -- | Given a Grid positioned where sand spawns, simulate its motion, moving the grid focus.
 -- This process stops when the sand stops and the grid is returned.
 -- If the sand would fall out of bounds, returns Nothing.
 sand :: forall h w. KnownSize h w => SandGrid h w  -> Maybe (SandGrid h w)
-sand g = do
+sand !g = do
   !d <- down g
   !dl <- down <=< left $ g
   !dr <- down <=< right $ g
@@ -119,14 +119,14 @@ sand g = do
 
 -- | Replace the tile under focus with Sand.
 freeze :: KnownSize h w => SandGrid h w -> SandGrid h w
-freeze g = (`G.extend` g) $ \g' -> if G.pos g == G.pos g' then Sand else G.extract g'
+freeze !g = (`G.extend` g) $ \(!g') -> if G.pos g == G.pos g' then Sand else G.extract g'
 
 -- | Given a grid positioned where sand spawns, simulate the motion of a new grain of sand.
 -- If the sand would fall out of bounds, returns Nothing.
 -- Otherwise, returns a grid in which the sand has stopped and the grid position
 -- returned to the start.
 step :: KnownSize h w => SandGrid h w -> Maybe (SandGrid h w)
-step g = G.seek (G.pos g) . freeze <$> sand g
+step !g = G.seek (G.pos g) . freeze <$> sand g
 
 -- | Given a grid positioned where sand spawns, repeatedly spawn sand and
 -- simulate its motion. Computes a sequence of grids, each of which has one more
@@ -143,11 +143,14 @@ countSand = sum . map (length . filter (Sand ==)) . G.materialize
 answer1 :: Input -> Int
 answer1 input = setup input $ countSand . last . simulate
 
+answer2 :: Input -> [Int]
+answer2 input = setup input $ map countSand . takeWhile (not . blocked . G.extract) . simulate
+
 printGrid :: KnownSize h w => SandGrid h w -> IO ()
 printGrid = traverse_ (putStrLn . map t2c) . G.materialize
 
 main :: IO ()
-main = print . answer1 . parse =<< readFile "input/day14.txt"
+main = traverse_ print . answer2 . parse =<< readFile "input/day14.txt"
 
 repeatedM :: Monad m => Int -> (a -> m a) -> a -> m a
 repeatedM 0 _ = pure
